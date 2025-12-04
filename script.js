@@ -1,102 +1,211 @@
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Layout Lens</title>
+// ===========================
+// Camera Setup
+// ===========================
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
 
-<style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    overflow: hidden;
-    background: #000;
-    height: 100%;
+let currentStream;
+let usingFrontCamera = false;
+
+async function startCamera() {
+  if (currentStream) {
+    currentStream.getTracks().forEach(t => t.stop());
   }
 
-  video, canvas {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100vw;
-    height: 100vh;
-    object-fit: cover;
+  try {
+    currentStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: usingFrontCamera ? "user" : "environment" }
+    });
+
+    video.srcObject = currentStream;
+    video.play();
+  } catch (err) {
+    alert("Camera access blocked.");
+  }
+}
+
+startCamera();
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+
+resizeCanvas();
+window.addEventListener("resize", resizeCanvas);
+
+// ===========================
+// Drawing State
+// ===========================
+let mode = "dot"; // dot | vert | hori | angle
+let lines = [];
+let selectedId = null;
+
+function drawEverything() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  lines.forEach(l => {
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = l.id === selectedId ? "#4da3ff" : "white";
+    ctx.beginPath();
+    ctx.moveTo(l.x1, l.y1);
+    ctx.lineTo(l.x2, l.y2);
+    ctx.stroke();
+
+    if (l.type === "dot") {
+      ctx.beginPath();
+      ctx.arc(l.x1, l.y1, 6, 0, Math.PI * 2);
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.fill();
+    }
+  });
+}
+
+// ===========================
+// Line Creation
+// ===========================
+canvas.addEventListener("click", (e) => {
+  const x = e.clientX;
+  const y = e.clientY;
+
+  if (mode === "dot") {
+    lines.push({ id: Date.now(), type: "dot", x1: x, y1: y, x2: x, y2: y });
   }
 
-  #toolbar {
-    position: fixed;
-    bottom: 14px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    gap: 8px;
-    background: rgba(0,0,0,0.55);
-    padding: 10px 12px;
-    border-radius: 14px;
-    backdrop-filter: blur(6px);
-    z-index: 50;
+  if (mode === "vert") {
+    lines.push({ id: Date.now(), type: "vert", x1: x, y1: 0, x2: x, y2: canvas.height });
   }
 
-  .btn {
-    padding: 8px 12px;
-    border-radius: 8px;
-    border: none;
-    background: rgba(255,255,255,0.85);
-    font-size: 14px;
-    font-weight: 600;
+  if (mode === "hori") {
+    lines.push({ id: Date.now(), type: "hori", x1: 0, y1: y, x2: canvas.width, y2: y });
   }
 
-  .btn.active {
-    background: #4da3ff;
-    color: #fff;
+  if (mode === "angle") {
+    lines.push({ id: Date.now(), type: "angle", x1: x - 80, y1: y + 80, x2: x + 80, y2: y - 80 });
   }
 
-  #deleteBtn {
-    display: none;
+  drawEverything();
+});
+
+// ===========================
+// Selection & Deletion
+// ===========================
+function distancePointToLine(px, py, x1, y1, x2, y2) {
+  const A = px - x1;
+  const B = py - y1;
+  const C = x2 - x1;
+  const D = y2 - y1;
+
+  const dot = A * C + B * D;
+  const lenSq = C * C + D * D;
+  const param = lenSq ? dot / lenSq : -1;
+
+  let xx, yy;
+
+  if (param < 0) {
+    xx = x1;
+    yy = y1;
+  } else if (param > 1) {
+    xx = x2;
+    yy = y2;
+  } else {
+    xx = x1 + param * C;
+    yy = y1 + param * D;
   }
 
-  #note {
-    position: fixed;
-    top: 12px;
-    left: 12px;
-    padding: 6px 10px;
-    font-size: 14px;
-    background: rgba(0,0,0,0.45);
-    color: #fff;
-    border-radius: 8px;
-    z-index: 40;
-  }
-</style>
-</head>
+  const dx = px - xx;
+  const dy = py - yy;
+  return Math.sqrt(dx * dx + dy * dy);
+}
 
-<body>
+canvas.addEventListener("mousedown", (e) => {
+  const x = e.clientX;
+  const y = e.clientY;
 
-<video id="video" autoplay playsinline muted></video>
-<canvas id="canvas"></canvas>
+  selectedId = null;
 
-<div id="note">
-  Frame: <span id="currentRatio">1:1</span>
-</div>
+  lines.forEach(l => {
+    const d = distancePointToLine(x, y, l.x1, l.y1, l.x2, l.y2);
+    if (d < 15) selectedId = l.id;
+  });
 
-<div id="toolbar">
-  <button id="dotBtn" class="btn active">Dot</button>
-  <button id="vertBtn" class="btn">│</button>
-  <button id="horiBtn" class="btn">—</button>
-  <button id="angleBtn" class="btn">Angle</button>
+  drawEverything();
+  document.getElementById("deleteBtn").style.display = selectedId ? "block" : "none";
+});
 
-  <!-- ratios -->
-  <button class="btn ratioBtn" data-r="1">1:1</button>
-  <button class="btn ratioBtn" data-r="5/7">5:7</button>
-  <button class="btn ratioBtn" data-r="4/5">4:5</button>
-  <button class="btn ratioBtn" data-r="1.618">Golden</button>
+document.getElementById("deleteBtn").addEventListener("click", () => {
+  lines = lines.filter(l => l.id !== selectedId);
+  selectedId = null;
+  document.getElementById("deleteBtn").style.display = "none";
+  drawEverything();
+});
 
-  <!-- delete appears only when line selected -->
-  <button id="deleteBtn" class="btn">🗑</button>
+// ===========================
+// UI Buttons
+// ===========================
+const modes = {
+  dotBtn: "dot",
+  vertBtn: "vert",
+  horiBtn: "hori",
+  angleBtn: "angle"
+};
 
-  <button id="captureBtn" class="btn">📸</button>
-  <button id="switchBtn" class="btn">Switch</button>
-</div>
+for (let id in modes) {
+  document.getElementById(id).addEventListener("click", () => {
+    mode = modes[id];
+    document.querySelectorAll(".btn").forEach(b => b.classList.remove("active"));
+    document.getElementById(id).classList.add("active");
+  });
+}
 
-<script src="script.js"></script>
+// Aspect ratios
+const ratioBtns = document.querySelectorAll(".ratioBtn");
+const ratioDisplay = document.getElementById("currentRatio");
 
-</body>
-</html>
+ratioBtns.forEach(btn => {
+  btn.addEventListener("click", () => {
+    const ratio = eval(btn.dataset.r);
+    const h = window.innerHeight;
+    const w = h * ratio;
+    canvas.style.width = w + "px";
+    canvas.style.margin = "0 auto";
+    ratioDisplay.textContent = btn.textContent;
+  });
+});
+
+// ===========================
+// Capture
+// ===========================
+document.getElementById("captureBtn").addEventListener("click", () => {
+  const temp = document.createElement("canvas");
+  temp.width = canvas.width;
+  temp.height = canvas.height;
+  const tctx = temp.getContext("2d");
+
+  tctx.drawImage(video, 0, 0, temp.width, temp.height);
+  tctx.drawImage(canvas, 0, 0);
+
+  const link = document.createElement("a");
+  link.download = "viewfinder.png";
+  link.href = temp.toDataURL("image/png");
+  link.click();
+});
+
+// ===========================
+// Switch Camera
+// ===========================
+document.getElementById("switchBtn").addEventListener("click", () => {
+  usingFrontCamera = !usingFrontCamera;
+  startCamera();
+});
+
+// ===========================
+// Animation Loop
+// ===========================
+function animate() {
+  drawEverything();
+  requestAnimationFrame(animate);
+}
+
+animate();
